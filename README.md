@@ -1,2 +1,11 @@
 # agent-forge
-A protocol-neutral capability framework for exposing application functionality as safe, typed tools across WebMCP, MCP, voice agents, DASP, and other agent runtimes.
+Agent Forge makes applications agent-addressable. Define a capability once, then expose it through WebMCP, MCP, or other agent interfaces.
+
+Application capability
+       │
+       ▼
+   Agent Forge
+       │
+ ┌─────┼──────┬──────┐
+ ▼     ▼      ▼      ▼
+WebMCP MCP   DASP   Voice

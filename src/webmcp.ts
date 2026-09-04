@@ -16,9 +16,10 @@ export interface WebMcpToolDefinition {
   description: string;
   inputSchema: JsonSchema;
   annotations: WebMcpToolAnnotations;
+  /** Chrome 152+ invokes this with only `input`; `options` is not guaranteed. */
   execute(
     input: unknown,
-    options: WebMcpExecutionOptions,
+    options?: WebMcpExecutionOptions,
   ): string | Promise<string>;
 }
 
@@ -152,7 +153,8 @@ export class WebMcpAdapter {
           readOnlyHint: capability.effect === 'read',
           untrustedContentHint: capability.untrustedContent ?? false,
         },
-        execute: async (input, { signal }) => {
+        execute: async (input, options) => {
+          const signal = options?.signal ?? new AbortController().signal;
           const currentAvailability = resolveCapabilityAvailability(capability);
           if (!currentAvailability.available) {
             throw new Error(

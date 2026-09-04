@@ -80,3 +80,28 @@ describe('WebMcpAdapter', () => {
     expect(context.tools.size).toBe(0);
   });
 });
+
+describe('WebMcpAdapter execute wrapper', () => {
+  it('runs when the host passes only the input argument (Chrome 152+)', async () => {
+    const context = new MockModelContext();
+    const adapter = new WebMcpAdapter({ modelContext: context });
+    let seenSignal: unknown;
+    await adapter.sync([
+      defineCapability({
+        id: 'echo',
+        description: 'Echo the input.',
+        inputSchema: emptySchema,
+        effect: 'read',
+        execute: (input: unknown, { signal }: { signal: AbortSignal }) => {
+          seenSignal = signal;
+          return input;
+        },
+      }),
+    ]);
+
+    const tool = context.tools.get('echo');
+    const execute = tool?.execute as unknown as (input: unknown) => Promise<string>;
+    expect(JSON.parse(await execute({ n: 1 }))).toEqual({ n: 1 });
+    expect(seenSignal).toBeInstanceOf(AbortSignal);
+  });
+});

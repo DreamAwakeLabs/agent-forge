@@ -17,6 +17,8 @@ export type CapabilityAvailabilityCheck = () =>
 
 export interface CapabilityExecutionContext {
   signal: AbortSignal;
+  /** Per-execution correlation ID, set when run through `executeCapability` or an adapter. */
+  executionId?: string;
 }
 
 export interface Capability<TInput = Record<string, unknown>, TResult = unknown> {

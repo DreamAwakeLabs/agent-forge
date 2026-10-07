@@ -1,4 +1,5 @@
 import { resolveCapabilityAvailability, resolveCapabilityConsequential, } from './capability.js';
+import { executeCapability } from './execution.js';
 function browserModelContext() {
     if (typeof document === 'undefined') {
         return null;
@@ -31,6 +32,7 @@ function serializeResult(result, capabilityId) {
 export class WebMcpAdapter {
     modelContext;
     exposedTo;
+    instrumentation;
     registrations = new Map();
     /** Tail of the sync queue; syncs run one at a time in call order, so the last call wins. */
     queue = Promise.resolve();
@@ -41,6 +43,11 @@ export class WebMcpAdapter {
             ? browserModelContext()
             : options.modelContext;
         this.exposedTo = options.exposedTo;
+        this.instrumentation = {
+            observer: options.observer,
+            onObserverError: options.onObserverError,
+            surface: 'webmcp',
+        };
     }
     get supported() {
         return isWebMcpSupported(this.modelContext);
@@ -95,12 +102,10 @@ export class WebMcpAdapter {
                     consequentialHint: resolveCapabilityConsequential(capability),
                 },
                 execute: async (input, options) => {
-                    const signal = options?.signal ?? new AbortController().signal;
-                    const currentAvailability = resolveCapabilityAvailability(capability);
-                    if (!currentAvailability.available) {
-                        throw new Error(currentAvailability.reason ?? `Capability "${capability.id}" is not currently available.`);
-                    }
-                    const result = await capability.execute(input, { signal });
+                    const result = await executeCapability(capability, input, {
+                        ...this.instrumentation,
+                        signal: options?.signal,
+                    });
                     return serializeResult(result, capability.id);
                 },
             };

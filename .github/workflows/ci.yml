@@ -12,5 +12,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
+          cache: npm
+      - run: npm ci
       - run: npm run check
+      - name: Committed dist/ matches a fresh build
+        run: |
+          if [ -n "$(git status --porcelain -- dist)" ]; then
+            git status --porcelain -- dist
+            git diff -- dist
+            echo "::error::dist/ is stale. Run 'npm run compile' and commit dist/."
+            exit 1
+          fi

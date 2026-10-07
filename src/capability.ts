@@ -31,3 +31,9 @@ export function resolveCapabilityAvailability(
   }
   return result;
 }
+
+export function resolveCapabilityConsequential(
+  capability: Capability<unknown, unknown>,
+): boolean {
+  return capability.consequential ?? capability.effect === 'irreversible-write';
+}

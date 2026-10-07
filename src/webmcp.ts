@@ -1,9 +1,14 @@
-import { resolveCapabilityAvailability } from './capability.js';
+import {
+  resolveCapabilityAvailability,
+  resolveCapabilityConsequential,
+} from './capability.js';
 import type { Capability, JsonSchema } from './types.js';
 
 export interface WebMcpToolAnnotations {
   readOnlyHint: boolean;
   untrustedContentHint: boolean;
+  /** Significant, real-world, or non-reversible action. Always set by this adapter. */
+  consequentialHint?: boolean;
 }
 
 export interface WebMcpExecutionOptions {
@@ -80,6 +85,7 @@ function toolFingerprint(capability: AnyCapability): string {
     inputSchema: capability.inputSchema,
     effect: capability.effect,
     untrustedContent: capability.untrustedContent ?? false,
+    consequential: resolveCapabilityConsequential(capability),
   });
 }
 
@@ -97,6 +103,10 @@ export class WebMcpAdapter {
   private readonly modelContext: WebMcpModelContext | null;
   private readonly exposedTo?: string[];
   private readonly registrations = new Map<string, Registration>();
+  /** Tail of the sync queue; syncs run one at a time in call order, so the last call wins. */
+  private queue: Promise<unknown> = Promise.resolve();
+  /** Incremented by dispose() so syncs queued or running before it stop registering tools. */
+  private generation = 0;
 
   constructor(options: WebMcpAdapterOptions = {}) {
     this.modelContext = options.modelContext === undefined
@@ -113,7 +123,17 @@ export class WebMcpAdapter {
     return [...this.registrations.keys()].sort();
   }
 
-  async sync(capabilities: readonly AnyCapability[]): Promise<WebMcpSyncReport> {
+  sync(capabilities: readonly AnyCapability[]): Promise<WebMcpSyncReport> {
+    const generation = this.generation;
+    const run = this.queue.then(() => this.reconcile(capabilities, generation));
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async reconcile(
+    capabilities: readonly AnyCapability[],
+    generation: number,
+  ): Promise<WebMcpSyncReport> {
     const unavailable: Array<{ id: string; reason?: string }> = [];
     const desired = new Map<string, AnyCapability>();
 
@@ -139,6 +159,9 @@ export class WebMcpAdapter {
     }
 
     for (const capability of desired.values()) {
+      if (generation !== this.generation) {
+        break;
+      }
       if (this.registrations.has(capability.id)) {
         continue;
       }
@@ -152,6 +175,7 @@ export class WebMcpAdapter {
         annotations: {
           readOnlyHint: capability.effect === 'read',
           untrustedContentHint: capability.untrustedContent ?? false,
+          consequentialHint: resolveCapabilityConsequential(capability),
         },
         execute: async (input, options) => {
           const signal = options?.signal ?? new AbortController().signal;
@@ -171,14 +195,20 @@ export class WebMcpAdapter {
         ...(this.exposedTo ? { exposedTo: this.exposedTo } : {}),
       };
 
+      // Track the registration before awaiting so dispose() can abort it mid-sync.
+      this.registrations.set(capability.id, {
+        controller,
+        fingerprint: toolFingerprint(capability),
+      });
       try {
         await this.modelContext.registerTool(tool, registerOptions);
-        this.registrations.set(capability.id, {
-          controller,
-          fingerprint: toolFingerprint(capability),
-        });
       } catch (error) {
         controller.abort();
+        if (generation !== this.generation) {
+          // dispose() already aborted and cleared this registration; the rejection is expected.
+          break;
+        }
+        this.registrations.delete(capability.id);
         throw error;
       }
     }
@@ -191,6 +221,7 @@ export class WebMcpAdapter {
   }
 
   dispose(): void {
+    this.generation += 1;
     for (const registration of this.registrations.values()) {
       registration.controller.abort();
     }

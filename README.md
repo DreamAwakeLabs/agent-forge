@@ -29,12 +29,51 @@ Agent Forge currently models:
 - explicit effect classification (`read`, `reversible-write`, `write`, `irreversible-write`)
 - dynamic availability
 - untrusted-content metadata
+- consequential-action metadata
 - cancellation-aware execution
 - lifecycle-managed WebMCP registration
+
+## Install
+
+Agent Forge is not published to a registry. Install it from GitHub, pinned to a commit:
+
+```bash
+npm install "github:DreamAwakeLabs/agent-forge#<commit-sha>"
+```
+
+The compiled `dist/` is committed, and the package defines no `prepare`, `build`, or install
+lifecycle scripts. npm therefore downloads the commit tarball over HTTPS and uses it as-is: no
+SSH, no devDependency install, and no build step on the consumer side. This works on npm 10 and 11.
+(npm 10.9 crashes while building git dependencies whose `prepare` step installs vitest 4.)
+
+CI runs `npm run compile` and fails if the committed `dist/` differs from the fresh build. After
+changing `src/`, run `npm run check` and commit the regenerated `dist/` with your change.
 
 ## WebMCP adapter
 
 The adapter follows the current `document.modelContext.registerTool()` shape. Registration is owned by an `AbortController`, and the execution `AbortSignal` is passed through to the domain capability.
+
+Capability fields map to WebMCP tool annotations:
+
+| Capability | Annotation | Default |
+| --- | --- | --- |
+| `effect === 'read'` | `readOnlyHint` | — |
+| `untrustedContent` | `untrustedContentHint` | `false` |
+| `consequential` | `consequentialHint` | `true` for `'irreversible-write'`, otherwise `false` |
+
+Set `consequential: true` on any capability that takes a significant, real-world, or non-reversible
+action, even when its effect is an ordinary `'write'`, for example submitting a person's contact details to a business:
+
+```ts
+const requestCallback = defineCapability({
+  id: 'request_callback',
+  description: "Send the user's name and phone number to the business so it can call them back.",
+  inputSchema: callbackSchema,
+  effect: 'write',
+  consequential: true,
+  execute: (input) => api.requestCallback(input),
+});
+```
 
 ```ts
 import { defineCapability, WebMcpAdapter } from '@dreamawakelabs/agent-forge';
@@ -60,6 +99,11 @@ await adapter.sync([getSelection]);
 adapter.dispose();
 ```
 
+`sync()` may be called concurrently, for example from several reactive watchers. Calls run one at a
+time in call order, so the last call's capability set wins and no tool name is registered twice.
+`dispose()` unregisters every tool, including one whose registration is still in flight, and makes
+syncs that were already queued register nothing. The adapter can be synced again after `dispose()`.
+
 The first reference consumer is [`DreamAwakeLabs/webmcp-replay-room`](https://github.com/DreamAwakeLabs/webmcp-replay-room), a Vue tennis-session review workspace built for the 2026 WebMCP Challenge.
 
 ## Development
@@ -67,8 +111,8 @@ The first reference consumer is [`DreamAwakeLabs/webmcp-replay-room`](https://gi
 Requires Node.js 20.19+.
 
 ```bash
-npm install
-npm run check
+npm ci
+npm run check   # typecheck, test, and compile dist/
 ```
 
 ## Status

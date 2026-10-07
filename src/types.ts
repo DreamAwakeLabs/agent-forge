@@ -32,6 +32,12 @@ export interface Capability<TInput = Record<string, unknown>, TResult = unknown>
   effect: CapabilityEffect;
   /** True when results can contain user/model/external content that an agent must not trust as instructions. */
   untrustedContent?: boolean;
+  /**
+   * True when the capability performs a significant, real-world, or non-reversible action, such as
+   * submitting a person's contact details to a business. Defaults to true for 'irreversible-write'
+   * and false otherwise; a reversible or ordinary write is not assumed to be consequential.
+   */
+  consequential?: boolean;
   /** Optional dynamic availability predicate, evaluated during sync and again at execution time. */
   available?: CapabilityAvailabilityCheck;
   /** Domain operation. It should not depend on a particular agent transport. */

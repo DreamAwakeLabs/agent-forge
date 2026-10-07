@@ -5,6 +5,7 @@ import {
   type WebMcpModelContext,
   type WebMcpRegisterOptions,
   type Capability,
+  type CapabilityExecutionEvent,
   type WebMcpToolDefinition,
 } from '../index.js';
 
@@ -224,5 +225,71 @@ describe('WebMcpAdapter concurrent sync', () => {
     // The adapter stays usable after dispose.
     await adapter.sync([tool('a')]);
     expect([...context.tools.keys()]).toEqual(['a']);
+  });
+});
+
+describe('WebMcpAdapter observer', () => {
+  it('reports executions with the webmcp surface, including input-only calls (Chrome 152+)', async () => {
+    const context = new MockModelContext();
+    const events: CapabilityExecutionEvent[] = [];
+    const adapter = new WebMcpAdapter({
+      modelContext: context,
+      observer: { onEvent: (event) => { events.push(event); } },
+    });
+    await adapter.sync([
+      tool('submit_contact', { effect: 'write', consequential: true, execute: () => ({ sent: true }) }),
+      tool('broken', { execute: () => { throw new SyntaxError('bad'); } }),
+    ]);
+
+    const submit = context.tools.get('submit_contact')?.execute as unknown as (input: unknown) => Promise<string>;
+    expect(JSON.parse(await submit({ email: 'person@example.com' }))).toEqual({ sent: true });
+    await expect(context.tools.get('broken')?.execute({})).rejects.toThrow('bad');
+
+    expect(events.map(({ capabilityId, phase, surface, consequential, errorName }) => ({
+      capabilityId, phase, surface, consequential, errorName,
+    }))).toEqual([
+      { capabilityId: 'submit_contact', phase: 'started', surface: 'webmcp', consequential: true, errorName: undefined },
+      { capabilityId: 'submit_contact', phase: 'succeeded', surface: 'webmcp', consequential: true, errorName: undefined },
+      { capabilityId: 'broken', phase: 'started', surface: 'webmcp', consequential: false, errorName: undefined },
+      { capabilityId: 'broken', phase: 'failed', surface: 'webmcp', consequential: false, errorName: 'SyntaxError' },
+    ]);
+    expect(JSON.stringify(events)).not.toContain('person@example.com');
+  });
+
+  it('passes the host abort signal through and reports aborted', async () => {
+    const context = new MockModelContext();
+    const events: CapabilityExecutionEvent[] = [];
+    const adapter = new WebMcpAdapter({
+      modelContext: context,
+      observer: { onEvent: (event) => { events.push(event); } },
+    });
+    await adapter.sync([tool('wait', {
+      execute: (_input, { signal }) => new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      }),
+    })]);
+
+    const controller = new AbortController();
+    const running = context.tools.get('wait')?.execute({}, { signal: controller.signal });
+    controller.abort();
+    await expect(running).rejects.toMatchObject({ name: 'AbortError' });
+    expect(events.map((event) => event.phase)).toEqual(['started', 'aborted']);
+  });
+
+  it('keeps tools working when the observer throws', async () => {
+    const context = new MockModelContext();
+    const onObserverError = vi.fn();
+    const adapter = new WebMcpAdapter({
+      modelContext: context,
+      observer: { onEvent: () => { throw new Error('telemetry down'); } },
+      onObserverError,
+    });
+    await adapter.sync([tool('read_state', { execute: () => ({ state: 1 }) })]);
+
+    expect(JSON.parse(await context.tools.get('read_state')!.execute({}))).toEqual({ state: 1 });
+    expect(onObserverError).toHaveBeenCalledTimes(2);
+
+    adapter.dispose();
+    expect(context.tools.size).toBe(0);
   });
 });

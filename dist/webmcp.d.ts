@@ -1,3 +1,4 @@
+import { type CapabilityInstrumentation } from './execution.js';
 import type { Capability, JsonSchema } from './types.js';
 export interface WebMcpToolAnnotations {
     readOnlyHint: boolean;
@@ -29,6 +30,10 @@ export interface WebMcpAdapterOptions {
     modelContext?: WebMcpModelContext | null;
     /** Secure origins that may discover this document's tools. Omit for same-origin/browser-agent use. */
     exposedTo?: string[];
+    /** Receives metadata-only lifecycle events for every tool execution, with surface 'webmcp'. */
+    observer?: CapabilityInstrumentation['observer'];
+    /** Receives errors thrown by `observer`. They are ignored when omitted. */
+    onObserverError?: CapabilityInstrumentation['onObserverError'];
 }
 export interface WebMcpSyncReport {
     supported: boolean;
@@ -43,6 +48,7 @@ export declare function isWebMcpSupported(modelContext?: WebMcpModelContext | nu
 export declare class WebMcpAdapter {
     private readonly modelContext;
     private readonly exposedTo?;
+    private readonly instrumentation;
     private readonly registrations;
     /** Tail of the sync queue; syncs run one at a time in call order, so the last call wins. */
     private queue;

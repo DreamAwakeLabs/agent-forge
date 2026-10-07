@@ -32,6 +32,7 @@ Agent Forge currently models:
 - consequential-action metadata
 - cancellation-aware execution
 - lifecycle-managed WebMCP registration
+- privacy-safe execution lifecycle observation
 
 ## Install
 
@@ -105,6 +106,83 @@ time in call order, so the last call's capability set wins and no tool name is r
 syncs that were already queued register nothing. The adapter can be synced again after `dispose()`.
 
 The first reference consumer is [`DreamAwakeLabs/webmcp-replay-room`](https://github.com/DreamAwakeLabs/webmcp-replay-room), a Vue tennis-session review workspace built for the 2026 WebMCP Challenge.
+
+## Execution observability
+
+Agent Forge can tell you which capability ran, through which surface, how it ended, and how long it
+took. It does not define an observability backend: you pass an observer and forward events wherever
+you like, such as logs, metrics, or traces.
+
+```text
+domain operation
+      ↓
+  Capability
+      ↓
+execution lifecycle observer   (Agent Forge: metadata-only events)
+      ↓
+optional telemetry consumer    (yours: logger, metrics, tracing)
+```
+
+Each execution emits `started`, then exactly one of `succeeded`, `failed`, or `aborted`:
+
+```ts
+interface CapabilityExecutionEvent {
+  capabilityId: string;
+  effect: CapabilityEffect;
+  consequential: boolean;      // resolved, including the irreversible-write default
+  phase: 'started' | 'succeeded' | 'failed' | 'aborted';
+  executionId: string;         // random, per execution, shared by its events
+  startedAt: number;           // epoch ms
+  durationMs?: number;         // on succeeded / failed / aborted
+  errorName?: string;          // e.g. 'TypeError'; never the message
+  surface?: string;            // 'webmcp', 'mcp', 'voice', 'embedded', or any adapter-defined value
+}
+```
+
+**Privacy:** events are metadata only. They never contain tool input, tool output, prompts, error
+messages, or other free text. `errorName` is included only when it looks like a class name. There
+is deliberately no `metadata` field. To add sanitized application detail, record it yourself in the
+capability and join it on `context.executionId`, which every execution receives.
+
+**Isolation:** observers are called synchronously and returned promises are not awaited. An
+observer that throws or rejects never changes the capability's result or error. Pass
+`onObserverError` to see those failures; otherwise they are ignored.
+
+`aborted` means the execution's `AbortSignal` was aborted when the capability threw.
+
+```ts
+const adapter = new WebMcpAdapter({
+  observer: {
+    onEvent(event) {
+      if (event.phase !== 'started') {
+        metrics.histogram('capability.duration_ms', event.durationMs, {
+          capability: event.capabilityId,
+          outcome: event.phase,
+          surface: event.surface,
+        });
+      }
+    },
+  },
+  onObserverError: (error) => console.warn('capability observer failed', error),
+});
+```
+
+Other adapters, or applications that call capabilities directly, use the same wrapper. It checks
+availability, assigns the execution ID, emits the events, and returns or rethrows the capability's
+own result or error:
+
+```ts
+import { executeCapability } from '@dreamawakelabs/agent-forge';
+
+const result = await executeCapability(requestCallback, input, {
+  signal,
+  surface: 'voice',
+  observer: { onEvent: (event) => console.debug('[capability]', event) },
+});
+```
+
+When a capability is unavailable at execution time, the wrapper throws `CapabilityUnavailableError`.
+Its message is the availability reason.
 
 ## Development
 

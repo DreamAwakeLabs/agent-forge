@@ -2,6 +2,7 @@ import {
   resolveCapabilityAvailability,
   resolveCapabilityConsequential,
 } from './capability.js';
+import { executeCapability, type CapabilityInstrumentation } from './execution.js';
 import type { Capability, JsonSchema } from './types.js';
 
 export interface WebMcpToolAnnotations {
@@ -45,6 +46,10 @@ export interface WebMcpAdapterOptions {
   modelContext?: WebMcpModelContext | null;
   /** Secure origins that may discover this document's tools. Omit for same-origin/browser-agent use. */
   exposedTo?: string[];
+  /** Receives metadata-only lifecycle events for every tool execution, with surface 'webmcp'. */
+  observer?: CapabilityInstrumentation['observer'];
+  /** Receives errors thrown by `observer`. They are ignored when omitted. */
+  onObserverError?: CapabilityInstrumentation['onObserverError'];
 }
 
 export interface WebMcpSyncReport {
@@ -102,6 +107,7 @@ function serializeResult(result: unknown, capabilityId: string): string {
 export class WebMcpAdapter {
   private readonly modelContext: WebMcpModelContext | null;
   private readonly exposedTo?: string[];
+  private readonly instrumentation: CapabilityInstrumentation;
   private readonly registrations = new Map<string, Registration>();
   /** Tail of the sync queue; syncs run one at a time in call order, so the last call wins. */
   private queue: Promise<unknown> = Promise.resolve();
@@ -113,6 +119,11 @@ export class WebMcpAdapter {
       ? browserModelContext()
       : options.modelContext;
     this.exposedTo = options.exposedTo;
+    this.instrumentation = {
+      observer: options.observer,
+      onObserverError: options.onObserverError,
+      surface: 'webmcp',
+    };
   }
 
   get supported(): boolean {
@@ -178,14 +189,10 @@ export class WebMcpAdapter {
           consequentialHint: resolveCapabilityConsequential(capability),
         },
         execute: async (input, options) => {
-          const signal = options?.signal ?? new AbortController().signal;
-          const currentAvailability = resolveCapabilityAvailability(capability);
-          if (!currentAvailability.available) {
-            throw new Error(
-              currentAvailability.reason ?? `Capability "${capability.id}" is not currently available.`,
-            );
-          }
-          const result = await capability.execute(input, { signal });
+          const result = await executeCapability(capability, input, {
+            ...this.instrumentation,
+            signal: options?.signal,
+          });
           return serializeResult(result, capability.id);
         },
       };
